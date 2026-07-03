@@ -8,7 +8,7 @@ from livekit.agents import Agent
 
 _api_client = httpx.AsyncClient(timeout=5.0)
 
-from prompts import build_system_prompt, build_locked_prompt
+from prompts import build_prompt
 from tools import _persist_caller_name, search_knowledge_base
 
 
@@ -28,24 +28,14 @@ _AGENT_ECHO_NAME_RE = re.compile(
 _LANG_MAP: dict[str, str] = {
     "english": "en-IN", "hindi": "hi-IN", "telugu": "te-IN",
     "tamil": "ta-IN", "kannada": "kn-IN", "malayalam": "ml-IN",
-    "marathi": "mr-IN", "bengali": "bn-IN", "gujarati": "gu-IN", "punjabi": "pa-IN",
-    "తెలుగు": "te-IN", "తెలగు": "te-IN",
+    "తెలుగు": "te-IN", "తెలగు": "te-IN", "తెలేగు": "te-IN",
     "हिंदी": "hi-IN", "हिन्दी": "hi-IN",
-    "தமிழ்": "ta-IN",
-    "ಕನ್ನಡ": "kn-IN",
+    "தமிழ்": "ta-IN", "தெலுகு": "te-IN", "தெலுங்கு": "te-IN",
+    "ಕನ್ನಡ": "kn-IN", "ತೆಲುಗು": "te-IN", "ತಮಿಳು": "ta-IN",
     "മലയാളം": "ml-IN",
-    "मराठी": "mr-IN",
-    "বাংলা": "bn-IN",
-    "ਪੰਜਾਬੀ": "pa-IN",
-    "ਤੇਲਗੂ": "te-IN", "ਤੇਲੁਗੂ": "te-IN",
-    "తెలేగు": "te-IN", "తెలుగు": "te-IN",
-    "तेलुगु": "te-IN", "तेलगु": "te-IN",
-    "ତେଲୁଗୁ": "te-IN", "ତେଲକୁ": "te-IN",
-    "தெலுகு": "te-IN", "தெலுங்கு": "te-IN", "தெலுகூ": "te-IN",
-    "ತೆಲುಗು": "te-IN", "ತೆಲಗು": "te-IN",
+    "తమిళ్": "ta-IN", "కన్నడ": "kn-IN",
     "இந்தி": "hi-IN", "హిందీ": "hi-IN", "ಹಿಂದಿ": "hi-IN",
-    "తమిళ్": "ta-IN", "ತಮಿಳು": "ta-IN",
-    "కన్నడ": "kn-IN", "கன்னடம்": "kn-IN",
+    "तेलुगु": "te-IN", "तेलगु": "te-IN",
 }
 
 _SWITCH_PHRASES = [
@@ -58,17 +48,24 @@ _SWITCH_PHRASES = [
 _THINKING_FILLERS = ["Sure...", "One moment...", "Got it...", "Let me check..."]
 _filler_index = 0
 
-# Language-switch filler — English, plays before language is locked
-_LANG_SWITCH_FILLER = "Sure, switching now!"
+# Language-switch greetings — played immediately after switch, added to chat context
+# so the LLM sees the agent already responded in the new language and continues naturally.
+_SWITCH_GREETINGS: dict[str, str] = {
+    "ta-IN": "வணக்கம்! என்ன help பண்ணட்டும்?",
+    "te-IN": "నమస్కారం! ఎలా help చేయాలి?",
+    "hi-IN": "नमस्ते! मैं कैसे help करूँ?",
+    "kn-IN": "ನಮಸ್ಕಾರ! ಹೇಗೆ help ಮಾಡಲಿ?",
+    "ml-IN": "നമസ്കാരം! എങ്ങനെ help ചെയ്യാം?",
+}
 
 # Silence check phrases per language
 _SILENCE_PHRASES = {
-    "te-IN": "నేను ఇక్కడే ఉన్నాను, మీరు వినగలుగుతున్నారా?",
+    "en-IN": "I'm still here, are you there?",
     "hi-IN": "main yahan hoon, kya aap sun pa rahe hain?",
     "ta-IN": "naan inge irukkiren, kekkuringala?",
+    "te-IN": "నేను ఇక్కడే ఉన్నాను, మీరు వినగలుగుతున్నారా?",
     "kn-IN": "naanu illiddeene, neevu keluttiddeera?",
     "ml-IN": "njaan ivideyundu, kelkkunundo?",
-    "en-IN": "I'm still here, are you there?",
 }
 
 # One-line native greetings for non-English default languages.
@@ -78,10 +75,6 @@ _NATIVE_GREETINGS: dict[str, str] = {
     "kn-IN": "ನಮಸ್ಕಾರ! ನಾನು {name}, {org} ಕಡೆಯಿಂದ ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ — ಹೇಗೆ help ಮಾಡಬಹುದು?",
     "hi-IN": "नमस्ते! मैं {name} हूँ, {org} की तरफ से — आपकी कैसे help कर सकती हूँ?",
     "ml-IN": "നമസ്കാരം! ഞാൻ {name}, {org}-ൽ നിന്ന് — എങ്ങനെ help ചെയ്യാം?",
-    "mr-IN": "नमस्कार! मी {name}, {org} कडून बोलतेय — कशी मदत करू?",
-    "bn-IN": "নমস্কার! আমি {name}, {org} থেকে বলছি — কীভাবে সাহায্য করতে পারি?",
-    "gu-IN": "નમસ્તે! હું {name}, {org} તરફથી — કઈ રીતે help કરી શકું?",
-    "pa-IN": "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ {name}, {org} ਤੋਂ — ਕਿਵੇਂ help ਕਰ ਸਕਦੀ ਹਾਂ?",
 }
 
 logger = logging.getLogger(__name__)
@@ -92,7 +85,7 @@ class ReceptionistAgent(Agent):
     def __init__(self, session_id, agent_name="aira", org_name="",
                  org_description="", instructions="", default_language="en-IN"):
         super().__init__(
-            instructions=build_system_prompt(agent_name, org_name, org_description, instructions, default_language),
+            instructions=build_prompt(agent_name, org_name, default_language, org_description, instructions),
             tools=[search_knowledge_base],
         )
         self._session_id        = session_id
@@ -105,6 +98,7 @@ class ReceptionistAgent(Agent):
         self._first_turn_done   = False
         self._silence_task: asyncio.Task | None = None
         self._filler_task: asyncio.Task | None = None
+        self._generating        = False   # debounce: skip duplicate LLM calls from STT splits
 
         try:
             import sarvam_stt
@@ -181,6 +175,7 @@ class ReceptionistAgent(Agent):
         else:  # speaking
             self._cancel_filler_task()
             self._cancel_silence_timer()
+            self._generating = False
 
     # ------------------------------------------------------------------
 
@@ -189,6 +184,14 @@ class ReceptionistAgent(Agent):
         if not text:
             return
 
+        # Debounce: STT sometimes splits one utterance into two rapid messages.
+        # If we're already generating a response, skip this duplicate turn.
+        if self._generating:
+            logger.info("Skipping duplicate user turn (still generating): %r", text[:60])
+            asyncio.create_task(_save_transcript(self._session_id, "user", text))
+            return
+
+        self._generating = True
         asyncio.create_task(_save_transcript(self._session_id, "user", text))
         self._cancel_silence_timer()
 
@@ -226,25 +229,26 @@ class ReceptionistAgent(Agent):
                 asyncio.create_task(_persist_caller_name(self._session_id, name))
 
     async def _do_language_switch(self, lang: str, turn_ctx) -> None:
-        """Lock language first so TTS uses the right voice even if LLM starts responding
-        during the filler synthesis, then play the switch filler."""
-        self._set_language(lang)  # must come before any await
-        # No filler or prompt change needed for English — it's already the default
         if lang == "en-IN":
-            logger.info("Language switch to English — no filler, continuing")
+            self._set_language(lang)
             return
-        logger.info("Language switch → %s, playing filler", lang)
-        await self.session.say(_LANG_SWITCH_FILLER, add_to_chat_ctx=False)
-        logger.info("Language locked: %s", lang)
-        # Update agent instructions so LLM uses language-specific prompt from this turn on
+
+        # Play filler in English voice BEFORE locking language — so Cartesia English TTS speaks it
+        # session.say() returns a SpeechHandle (not a coroutine) — call without await to fire and forget
+        self.session.say("Sure, switching now!", add_to_chat_ctx=False)
+
+        # Lock language AFTER scheduling filler so TTS switches to target language from here on
+        self._set_language(lang)
+
+        # Update instructions for the LLM
         try:
-            focused = build_locked_prompt(
+            focused = build_prompt(
                 self._agent_name, self._org_name,
-                self._org_description, self._instructions_str,
                 lang,
+                self._org_description, self._instructions_str,
             )
             await self.update_instructions(focused)
-            logger.info("Instructions updated for %s (%d chars)", lang, len(focused))
+            logger.info("Language switched → %s", lang)
         except Exception as e:
             logger.warning("update_instructions failed: %s", e)
 
